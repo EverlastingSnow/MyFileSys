@@ -106,13 +106,29 @@ void my_startsys() {
   // 初始化根目录
   FCB* root = (FCB*)(myVHead + BLOCKSIZE * 5);
   my_copy_fcb(0, root, 0);
-  strcpy(openFileList[0].dir, "/root");
+  strcpy(openFileList[0].dir, "/root/");
   openFileList[0].fcbState = 0;
   openFileList[0].pos = 0;
   openFileList[0].free = 1;
   // root目录存在第5块
   openFileList[0].faDirBlock = 5;
   openFileList[0].fcbOffset = 0;
+
+  // 创建 "." 目录
+  FCB* newDir = (FCB*)malloc(sizeof(FCB));
+  strcpy(newDir->filename, ".");
+  strcpy(newDir->exname, "d");
+  newDir->attribute = ATT_DIR;
+  time_t rawTime = time(NULL);
+  struct tm* time = localtime(&rawTime);
+  newDir->time = time->tm_hour * 2048 + time->tm_min * 32 + time->tm_sec / 2;
+  newDir->date =
+      (time->tm_year - 100) * 512 + (time->tm_mon + 1) * 32 + time->tm_mday;
+  newDir->firstBlock = 5;
+  newDir->length = sizeof(FCB);
+  newDir->free = 1;
+  do_write(0, (char*)newDir, sizeof(FCB), OW);
+  free(newDir);
 }
 
 void my_exitsys() {
@@ -405,6 +421,7 @@ int do_write(int fd, char* text, int len, char wStyle) {
           printf("Error: No free block available.\n");
           return -1;
         }
+        blockPtr = (myVHead + BLOCKSIZE * blockID);
         fatPtr->id = blockID;
         fatPtr = fat1 + blockID;
         fatPtr->id = END;
@@ -419,9 +436,13 @@ int do_write(int fd, char* text, int len, char wStyle) {
   if (openFileList[fd].pos > openFileList[fd].length) {
     openFileList[fd].length = openFileList[fd].pos;
   }
+  printf(
+      "fd = %d, openFileList[fd].length = %d, openFileList[fd].pos = %d, "
+      "filename = "
+      "%s\n",
+      fd, openFileList[fd].length, openFileList[fd].pos, text);
   // 截断写一定要修改文件长度，覆盖写需要修改目录长度
-  if (wStyle == TW ||
-      (wStyle == AW && openFileList[fd].attribute == ATT_FILE)) {
+  if (wStyle == TW || (wStyle == AW && openFileList[fd].attribute == ATT_DIR)) {
     offset = openFileList[fd].length;
     fatPtr = fat1 + openFileList[fd].firstBlock;
     while (offset >= BLOCKSIZE) {
@@ -438,9 +459,426 @@ int do_write(int fd, char* text, int len, char wStyle) {
       fatPtr = fat1 + id;
     }
     fatPtr->id = FREE;
+    // while (1) {
+    //   // 不是最后一块，就先释放这块，再释放后面的
+    //   if (fatPtr->id != END) {
+    //     int id = fatPtr->id;
+    //     fatPtr->id = FREE;
+    //     fatPtr = fat1 + id;
+    //   } else {
+    //     fatPtr->id = FREE;
+    //     break;
+    //   }
+    // }
+    // // FAT表最后一块添加标记
+    // fatPtr = fat1 + blockID;
+    // fatPtr->id = END;
   }
   // 备份fat1到fat2
   memcpy((FAT*)(myVHead + BLOCKSIZE * 3), (FAT*)(myVHead + BLOCKSIZE * 1),
          BLOCKSIZE * 2);
   return len - leftToWrite;
+}
+
+void my_cd(char* dirName) {
+  // 检查当前目录是否为根目录
+  printf("dirName: %s, curFd: %d\n", dirName, curFd);
+  if (strcmp(dirName, "..") == 0) {
+    if (strcmp(openFileList[curFd].dir, "/") == 0) {
+      printf("Already in root directory.\n");
+      return;
+    }
+    // 找到父目录
+    int fatherFd = -1;
+    for (int i = 0; i < MAXOPENFILE; ++i) {
+      if (openFileList[i].firstBlock == openFileList[curFd].faDirBlock) {
+        fatherFd = i;
+        break;
+      }
+    }
+    if (fatherFd == -1) {
+      printf("Error: Parent directory not found.\n");
+      return;
+    }
+    curFd = fatherFd;
+    return;
+  }
+
+  // 在当前目录中查找目标目录
+  char buf[BLOCKSIZE];
+  openFileList[curFd].pos = 0;
+  if (do_read(curFd, openFileList[curFd].length, buf) < 0) {
+    printf("Error: Failed to read current directory.\n");
+    return;
+  }
+
+  FCB* fcbptr = (FCB*)buf;
+  int found = 0;
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+    if (strcmp(fcbptr->filename, dirName) == 0 &&
+        fcbptr->attribute == ATT_DIR) {
+      found = 1;
+      break;
+    }
+    fcbptr++;
+  }
+
+  if (!found) {
+    printf("Error: Directory not found.\n");
+    return;
+  }
+
+  // 打开目标目录
+  int fd = getFreeUserOpen();
+  if (fd == -1) {
+    printf("Error: No free file descriptor.\n");
+    return;
+  }
+
+  my_copy_fcb(fd, fcbptr, 0);
+  strcat(strcpy(openFileList[fd].dir, openFileList[curFd].dir), dirName);
+  strcat(openFileList[fd].dir, "/");
+  openFileList[fd].faDirBlock = openFileList[curFd].firstBlock;
+  openFileList[fd].fcbOffset = (fcbptr - (FCB*)buf);
+  openFileList[fd].fcbState = 0;
+  openFileList[fd].pos = 0;
+  openFileList[fd].free = 1;
+  curFd = fd;
+}
+
+void my_mkdir(char* dirName) {
+  // 检查目录名长度
+  if (strlen(dirName) > 8) {
+    printf("Error: Directory name too long.\n");
+    return;
+  }
+
+  // 检查目录名是否包含扩展名
+  char* fname = strtok(dirName, ".");
+  char* exname = strtok(NULL, ".");
+  if (exname != NULL) {
+    printf("Error: Directory name can not include extension name.\n");
+    return;
+  }
+
+  // 检查当前目录是否已满
+  char buf[MAXOPENFILE * BLOCKSIZE];
+  openFileList[curFd].pos = 0;
+  int fileLen = do_read(curFd, openFileList[curFd].length, buf);
+  if (fileLen < 0) {
+    printf("Error: Failed to read current directory.\n");
+    return;
+  }
+
+  // 检查目录是否已存在
+  FCB* fcbPtr = (FCB*)buf;
+  for (int i = 0; i < fileLen / sizeof(FCB); ++i) {
+    if (strcmp(fcbPtr[i].filename, dirName) == 0 &&
+        fcbPtr[i].attribute == ATT_DIR) {
+      printf("Error: Directory already exists.\n");
+      return;
+    }
+  }
+
+  // 申请一个空闲的打开目录表项
+  int newFd = getFreeUserOpen();
+  if (newFd == -1) {
+    printf("File number has reached the limit\n");
+    return;
+  }
+
+  // 分配新的磁盘块
+  int newBlock = getFreeBlock();
+  if (newBlock == -1) {
+    printf("Error: No free blocks available.\n");
+    openFileList[newFd].free = 0;
+    return;
+  }
+
+  // 更新FAT表
+  FAT* fat1 = (FAT*)(myVHead + BLOCKSIZE * 1);
+  fat1[newBlock].id = END;
+  FAT* fat2 = (FAT*)(myVHead + BLOCKSIZE * 3);
+  fat2[newBlock].id = END;
+
+  // 查找空闲FCB，找不到则扩容
+  fcbPtr = (FCB*)buf;
+  int freeFCB = 0;
+  for (freeFCB = 0; freeFCB < fileLen / sizeof(FCB); freeFCB++, fcbPtr++) {
+    if (fcbPtr->free == 0) {
+      break;
+    }
+  }
+  printf("freeFCB = %d, fileLen = %d\n", freeFCB, fileLen);
+
+  // 初始化新目录的FCB
+  FCB* newDir = (FCB*)malloc(sizeof(FCB));
+  strcpy(newDir->filename, dirName);
+  strcpy(newDir->exname, "d");
+  newDir->attribute = ATT_DIR;
+  time_t rawTime = time(NULL);
+  struct tm* time = localtime(&rawTime);
+  newDir->time = time->tm_hour * 2048 + time->tm_min * 32 + time->tm_sec / 2;
+  newDir->date =
+      (time->tm_year - 100) * 512 + (time->tm_mon + 1) * 32 + time->tm_mday;
+  newDir->firstBlock = newBlock;
+  newDir->length = 2 * sizeof(FCB);  // "." 和 ".." 条目
+  newDir->free = 1;
+
+  // 写入修改后的FCB
+  openFileList[curFd].pos = freeFCB * sizeof(FCB);
+  openFileList[curFd].fcbState = 1;
+  if (do_write(curFd, (char*)newDir, sizeof(FCB), OW) < 0) {
+    printf("Error: Failed to write directory entry.\n");
+    return;
+  }
+
+  my_copy_fcb(newFd, newDir, 0);
+  strcpy(openFileList[newFd].filename, dirName);
+  strcpy(openFileList[newFd].exname, "d");
+  openFileList[newFd].faDirBlock = openFileList[curFd].firstBlock;
+  openFileList[newFd].fcbOffset = freeFCB;
+  strcat(
+      strcat(strcpy(openFileList[newFd].dir, (char*)(openFileList[curFd].dir)),
+             "/"),
+      dirName);
+  openFileList[newFd].pos = 0;
+  openFileList[newFd].fcbState = 0;
+  openFileList[newFd].free = 1;
+
+  // 初始化新目录的内容
+  // 创建 "." 条目
+  strcpy(newDir->filename, ".");
+  do_write(newFd, (char*)newDir, sizeof(FCB), OW);
+  // 创建 ".." 条目
+  strcpy(newDir->filename, "..");
+  newDir->firstBlock = openFileList[curFd].firstBlock;
+  newDir->length = openFileList[curFd].length;
+  newDir->date = openFileList[curFd].date;
+  newDir->time = openFileList[curFd].time;
+  do_write(newFd, (char*)newDir, sizeof(FCB), OW);
+
+  {
+    char* tmpBuf = (char*)malloc(BLOCKSIZE * MAXOPENFILE);
+    openFileList[newFd].pos = 0;
+    int fileLen = do_read(newFd, openFileList[newFd].length, tmpBuf);
+    printf("fileLen = %d %s\n", fileLen, tmpBuf);
+    FCB* fcbPtr = (FCB*)tmpBuf;
+    for (int i = 0; i < fileLen / sizeof(FCB); ++i) {
+      printf("name = %s\n", fcbPtr[i].filename);
+    }
+  }
+
+  my_close(newFd);
+  free(newDir);
+
+  // 更新父目录的fcb (更新 "." 条目)
+  fcbPtr = (FCB*)buf;
+  fcbPtr->length = openFileList[curFd].length;
+  openFileList[curFd].pos = 0;
+  do_write(curFd, (char*)fcbPtr, sizeof(FCB), OW);
+  openFileList[curFd].fcbState = 1;
+}
+
+void my_rmdir(char* dirName) {
+  // 检查是否是当前目录
+  if (strcmp(dirName, ".") == 0) {
+    printf("Error: Cannot remove current directory.\n");
+    return;
+  }
+
+  // 检查是否是父目录
+  if (strcmp(dirName, "..") == 0) {
+    printf("Error: Cannot remove parent directory.\n");
+    return;
+  }
+
+  // 在当前目录中查找目标目录
+  char buf[BLOCKSIZE];
+  openFileList[curFd].pos = 0;
+  if (do_read(curFd, openFileList[curFd].length, buf) < 0) {
+    printf("Error: Failed to read current directory.\n");
+    return;
+  }
+
+  FCB* fcbptr = (FCB*)buf;
+  int found = -1;
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+    if (strcmp(fcbptr->filename, dirName) == 0 &&
+        fcbptr->attribute == ATT_DIR) {
+      found = i;
+      break;
+    }
+    fcbptr++;
+  }
+
+  if (found == -1) {
+    printf("Error: Directory not found.\n");
+    return;
+  }
+
+  // 检查目录是否为空
+  char dirBuf[BLOCKSIZE];
+  FCB* dirFCB = (FCB*)(myVHead + BLOCKSIZE * fcbptr->firstBlock);
+  if (dirFCB->length > 2 * sizeof(FCB)) {  // 除了 "." 和 ".." 还有其他条目
+    printf("Error: Directory is not empty.\n");
+    return;
+  }
+
+  // 释放目录占用的磁盘块
+  FAT* fat1 = (FAT*)(myVHead + BLOCKSIZE * 1);
+  int blockID = fcbptr->firstBlock;
+  while (blockID != END) {
+    int nextBlock = fat1[blockID].id;
+    fat1[blockID].id = FREE;
+    blockID = nextBlock;
+  }
+
+  // 从当前目录中删除目录项
+  memset(fcbptr, 0, sizeof(FCB));
+  openFileList[curFd].pos = found * sizeof(FCB);
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+    printf("Error: Failed to remove directory entry.\n");
+    return;
+  }
+
+  // 备份FAT表
+  memcpy((FAT*)(myVHead + BLOCKSIZE * 3), fat1, BLOCKSIZE * 2);
+}
+
+void my_ls() {
+  char buf[BLOCKSIZE];
+  openFileList[curFd].pos = 0;
+  if (do_read(curFd, openFileList[curFd].length, buf) < 0) {
+    printf("Error: Failed to read current directory.\n");
+    return;
+  }
+
+  FCB* fcbptr = (FCB*)buf;
+  printf("Name\tType\tSize\tDate\tTime\n");
+  printf("----------------------------------------\n");
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+    if (fcbptr->free == 1) {
+      printf("%s", fcbptr->filename);
+      if (fcbptr->attribute == ATT_FILE) {
+        printf(".%s", fcbptr->exname);
+      }
+      printf("\t");
+      printf("%s\t", fcbptr->attribute == ATT_DIR ? "DIR" : "FILE");
+      printf("%d\t", fcbptr->length);
+      printf("%d/%d/%d\t", (fcbptr->date >> 9) + 2000,
+             (fcbptr->date >> 5) & 0xf, fcbptr->date & 0x1f);
+      printf("%d:%d:%d\n", fcbptr->time >> 11, (fcbptr->time >> 5) & 0x3f,
+             (fcbptr->time & 0x1f) * 2);
+    }
+    fcbptr++;
+  }
+}
+
+void my_touch(char* fileName) {
+  // 检查文件名长度
+  if (strlen(fileName) > 8) {
+    printf("Error: File name too long.\n");
+    return;
+  }
+
+  // 检查当前目录是否已满
+  char buf[BLOCKSIZE];
+  openFileList[curFd].pos = 0;
+  if (do_read(curFd, openFileList[curFd].length, buf) < 0) {
+    printf("Error: Failed to read current directory.\n");
+    return;
+  }
+
+  // 检查文件是否已存在
+  FCB* fcbptr = (FCB*)buf;
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+    if (strcmp(fcbptr->filename, fileName) == 0) {
+      printf("Error: File already exists.\n");
+      return;
+    }
+    fcbptr++;
+  }
+
+  // 查找空闲FCB
+  fcbptr = (FCB*)buf;
+  int freeFCB = -1;
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+    if (fcbptr->free == 0) {
+      freeFCB = i;
+      break;
+    }
+    fcbptr++;
+  }
+
+  if (freeFCB == -1) {
+    printf("Error: Current directory is full.\n");
+    return;
+  }
+
+  // 初始化新文件的FCB
+  strcpy(fcbptr->filename, fileName);
+  strcpy(fcbptr->exname, "");
+  fcbptr->attribute = ATT_FILE;
+  time_t rawTime = time(NULL);
+  struct tm* time = localtime(&rawTime);
+  fcbptr->time = time->tm_hour * 2048 + time->tm_min * 32 + time->tm_sec / 2;
+  fcbptr->date =
+      (time->tm_year - 100) * 512 + (time->tm_mon + 1) * 32 + time->tm_mday;
+  fcbptr->firstBlock = END;  // 初始时没有数据块
+  fcbptr->length = 0;
+  fcbptr->free = 1;
+
+  // 写入修改后的FCB
+  openFileList[curFd].pos = freeFCB * sizeof(FCB);
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+    printf("Error: Failed to write file entry.\n");
+    return;
+  }
+}
+
+void my_rm(char* fileName) {
+  // 在当前目录中查找目标文件
+  char buf[BLOCKSIZE];
+  openFileList[curFd].pos = 0;
+  if (do_read(curFd, openFileList[curFd].length, buf) < 0) {
+    printf("Error: Failed to read current directory.\n");
+    return;
+  }
+
+  FCB* fcbptr = (FCB*)buf;
+  int found = -1;
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+    if (strcmp(fcbptr->filename, fileName) == 0 &&
+        fcbptr->attribute == ATT_FILE) {
+      found = i;
+      break;
+    }
+    fcbptr++;
+  }
+
+  if (found == -1) {
+    printf("Error: File not found.\n");
+    return;
+  }
+
+  // 释放文件占用的磁盘块
+  FAT* fat1 = (FAT*)(myVHead + BLOCKSIZE * 1);
+  int blockID = fcbptr->firstBlock;
+  while (blockID != END) {
+    int nextBlock = fat1[blockID].id;
+    fat1[blockID].id = FREE;
+    blockID = nextBlock;
+  }
+
+  // 从当前目录中删除文件项
+  memset(fcbptr, 0, sizeof(FCB));
+  openFileList[curFd].pos = found * sizeof(FCB);
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+    printf("Error: Failed to remove file entry.\n");
+    return;
+  }
+
+  // 备份FAT表
+  memcpy((FAT*)(myVHead + BLOCKSIZE * 3), fat1, BLOCKSIZE * 2);
 }

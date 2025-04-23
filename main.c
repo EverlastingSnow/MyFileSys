@@ -37,19 +37,50 @@ int main() {
     // 执行命令
     switch (getCommandID(sp)) {
       case CD:
+        sp = strtok(NULL, " \n");
+        if (sp != NULL) {
+          my_cd(sp);
+        } else {
+          printf("Please enter a directory name\n");
+        }
         break;
       case MKDIR:
+        sp = strtok(NULL, " \n");
+        if (sp != NULL) {
+          my_mkdir(sp);
+        } else {
+          printf("Please enter a directory name\n");
+        }
         break;
       case RMDIR:
+        sp = strtok(NULL, " \n");
+        if (sp != NULL) {
+          my_rmdir(sp);
+        } else {
+          printf("Please enter a directory name\n");
+        }
         break;
       case LS:
+        my_ls();
         break;
       case TOUCH:
+        sp = strtok(NULL, " \n");
+        if (sp != NULL) {
+          my_touch(sp);
+        } else {
+          printf("Please enter a filename\n");
+        }
         break;
       case RM:
+        sp = strtok(NULL, " \n");
+        if (sp != NULL) {
+          my_rm(sp);
+        } else {
+          printf("Please enter a filename\n");
+        }
         break;
       case OPEN:
-        sp = strtok(NULL, " ");
+        sp = strtok(NULL, " \n");
         if (sp != NULL) {
           my_open(sp);
         } else {
@@ -57,7 +88,7 @@ int main() {
         }
         break;
       case CLOSE:
-        sp = strtok(NULL, " ");
+        sp = strtok(NULL, " \n");
         if (sp == NULL) {
           if (openFileList[curFd].attribute == ATT_DIR) {
             printf("Can't close a directory.\n");
