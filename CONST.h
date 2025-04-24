@@ -24,6 +24,6 @@
 #define EXIT 10
 #define HELP 11
 
-#define TW 1 //截断写（Truncate Write）
-#define OW 2 //覆盖写（Overwrite）
-#define AW 3 //追加写（Append Write）
+#define TW 0 //截断写（Truncate Write）
+#define OW 1 //覆盖写（Overwrite）
+#define AW 2 //追加写（Append Write）

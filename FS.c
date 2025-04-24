@@ -153,8 +153,16 @@ int my_open(char* fileName) {
   FCB* fcbptr = (FCB*)buf;
   int fcbID = -1;
   int isDir = 0;
-  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
-    if (strcmp(fcbptr->filename, fileName) == 0 &&
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i,++fcbptr) {
+    size_t len = strlen(fcbptr->filename) + strlen(fcbptr->exname) + 2;     
+    char *tmp = malloc(sizeof(char) * len);
+    strcpy(tmp, fcbptr->filename);
+    strcat(tmp, ".");
+    strcat(tmp, fcbptr->exname);
+    if (strcmp(tmp, fileName) == 0 &&
+        fcbptr->attribute == ATT_FILE ||
+        strcmp(fcbptr->filename, fileName) == 0 &&
+        strcmp(fcbptr->exname, "") == 0 &&
         fcbptr->attribute == ATT_FILE) {
       // 找到目标文件
       fcbID = i;
@@ -334,9 +342,9 @@ int my_write(int fd) {
   char line[MAXOPENFILE * BLOCKSIZE] = "";
   printf(
       "Please enter the file content, if finished please input \":wq\" in a "
-      "new line:\n");
+      "new line with Carriage Return:\n");
   while (fgets(line, MAXOPENFILE * BLOCKSIZE, stdin)) {
-    if (strcmp(line, ":wq") == 0) {
+    if (strcmp(line, ":wq\n") == 0) {
       break;
     }
     line[strlen(line)] = '\n';
@@ -344,7 +352,9 @@ int my_write(int fd) {
   }
 
   text[strlen(text)] = '\0';
-  do_write(fd, text, strlen(text) + 1, wStyle);
+  strcpy(line, text + 2);
+  line[strlen(line) - 2] = '\0';
+  do_write(fd, line, strlen(line) + 1, wStyle);
   openFileList[fd].fcbState = 1;
   return 0;
 }
@@ -508,6 +518,8 @@ void my_cd(char* dirName) {
   FCB* fcbptr = (FCB*)buf;
   int found = 0;
   for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+    // printf("name = %s\n", fcbptr->filename);
+    // printf("dirName = %s\n", dirName);
     if (strcmp(fcbptr->filename, dirName) == 0 &&
         fcbptr->attribute == ATT_DIR) {
       found = 1;
@@ -753,7 +765,7 @@ void my_ls() {
   for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
     if (fcbptr->free == 1) {
       printf("%s", fcbptr->filename);
-      if (fcbptr->attribute == ATT_FILE) {
+      if (fcbptr->attribute == ATT_FILE && strcmp(fcbptr->exname, "") != 0) {
         printf(".%s", fcbptr->exname);
       }
       printf("\t");
@@ -770,8 +782,18 @@ void my_ls() {
 
 void my_touch(char* fileName) {
   // 检查文件名长度
+  if(strcmp(fileName, "") == 0){
+    printf("Please input valid file name");
+    return;
+  }
   if (strlen(fileName) > 8) {
     printf("Error: File name too long.\n");
+    return;
+  }
+
+
+  if(openFileList[curFd].attribute == ATT_FILE){
+    printf("Error: Can not create a file in a file");
     return;
   }
 
@@ -786,39 +808,78 @@ void my_touch(char* fileName) {
   // 检查文件是否已存在
   FCB* fcbptr = (FCB*)buf;
   for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
-    if (strcmp(fcbptr->filename, fileName) == 0) {
+    if (fcbptr->free == 0) {
+      fcbptr++;
+      continue;
+    }
+    size_t len = strlen(fcbptr->filename) + strlen(fcbptr->exname) + 2;     
+    char *tmp = malloc(sizeof(char) * len);
+    strcpy(tmp, fcbptr->filename);
+    strcat(tmp, ".");
+    strcat(tmp, fcbptr->exname);
+    if (strcmp(tmp, fileName) == 0) {
+      free(tmp);
       printf("Error: File already exists.\n");
       return;
     }
+    free(tmp);
     fcbptr++;
   }
 
   // 查找空闲FCB
   fcbptr = (FCB*)buf;
-  int freeFCB = -1;
-  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+  // int freeFCB = -1;
+  // for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
+  //   if (fcbptr->free == 0) {
+  //     freeFCB = i;
+  //     break;
+  //   }
+  //   fcbptr++;
+  // }
+  int freeFCB = 0;
+  for (freeFCB = 0; freeFCB < openFileList[curFd].length / sizeof(FCB); freeFCB++, fcbptr++) {
     if (fcbptr->free == 0) {
-      freeFCB = i;
       break;
     }
-    fcbptr++;
   }
 
-  if (freeFCB == -1) {
+  if (freeFCB >= BLOCKSIZE / sizeof(FCB)) {
     printf("Error: Current directory is full.\n");
     return;
   }
 
+  int blockID = getFreeBlock();
+  if (blockID == -1) {
+    printf("Error: No free blocks available.\n");
+    return;
+  }
+  // 更新FAT表
+  FAT* fat1 = (FAT*)(myVHead + BLOCKSIZE * 1);
+  FAT* fat2 = (FAT*)(myVHead + BLOCKSIZE * 3);
+  fat1[blockID].id = END;
+  memcpy(fat2, fat1, BLOCKSIZE * 2);
+
+
   // 初始化新文件的FCB
-  strcpy(fcbptr->filename, fileName);
-  strcpy(fcbptr->exname, "");
+  char *delim = strchr(fileName, '.');
+  if (delim != NULL){
+    *delim = '\0';
+    strncpy(fcbptr->filename, fileName, sizeof(fcbptr->filename) - 1);
+    strncpy(fcbptr->exname, delim + 1, sizeof(fcbptr->exname) - 1);
+    fcbptr->filename[sizeof(fcbptr->filename) - 1] = '\0';
+    fcbptr->exname[sizeof(fcbptr->exname) - 1] = '\0';
+  }else {
+    strncpy(fcbptr->filename, fileName, sizeof(fcbptr->filename) - 1);
+    fcbptr->filename[sizeof(fcbptr->filename) - 1] = '\0';
+    fcbptr->exname[0] = '\0';
+  }
   fcbptr->attribute = ATT_FILE;
   time_t rawTime = time(NULL);
   struct tm* time = localtime(&rawTime);
   fcbptr->time = time->tm_hour * 2048 + time->tm_min * 32 + time->tm_sec / 2;
   fcbptr->date =
       (time->tm_year - 100) * 512 + (time->tm_mon + 1) * 32 + time->tm_mday;
-  fcbptr->firstBlock = END;  // 初始时没有数据块
+  fcbptr->firstBlock = blockID;
   fcbptr->length = 0;
   fcbptr->free = 1;
 
@@ -828,6 +889,16 @@ void my_touch(char* fileName) {
     printf("Error: Failed to write file entry.\n");
     return;
   }
+
+  // 更新当前目录的FCB
+  fcbptr = (FCB*)buf;
+  fcbptr->length = openFileList[curFd].length;
+  openFileList[curFd].pos = 0;
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+    printf("Error: Failed to write current directory entry.\n");
+    return;
+  }
+  openFileList[curFd].fcbState = 1;
 }
 
 void my_rm(char* fileName) {
@@ -842,11 +913,22 @@ void my_rm(char* fileName) {
   FCB* fcbptr = (FCB*)buf;
   int found = -1;
   for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i) {
-    if (strcmp(fcbptr->filename, fileName) == 0 &&
-        fcbptr->attribute == ATT_FILE) {
+    size_t len = strlen(fcbptr->filename) + strlen(fcbptr->exname) + 2;
+    char *tmp = malloc(sizeof(char) * len);
+    strcpy(tmp, fcbptr->filename);
+    strcat(tmp, ".");
+    strcat(tmp, fcbptr->exname);
+    if (strcmp(tmp, fileName) == 0 &&
+        fcbptr->attribute == ATT_FILE ||
+        strcmp(fcbptr->filename, fileName) == 0 &&
+        strcmp(fcbptr->exname, "") == 0 &&
+        fcbptr->attribute == ATT_FILE
+      ) {
       found = i;
+      free(tmp);
       break;
     }
+    free(tmp);
     fcbptr++;
   }
 

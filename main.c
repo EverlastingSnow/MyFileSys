@@ -32,6 +32,9 @@ int main() {
     printf("$");
 
     fgets(command, 100, stdin);
+    if (strcmp(command, "\n") == 0) {
+      continue;  // 如果输入为空行，则继续
+    }
     char* sp;
     sp = strtok(command, " \n");
     // 执行命令

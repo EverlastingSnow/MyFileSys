@@ -7,9 +7,9 @@
 // FCB 32个字节
 typedef struct FCB {
   char filename[8];           // 文件名
-  char exname[3];             // 扩展名
+  char exname[4];             // 扩展名
   unsigned char attribute;    // 文件属性 0-目录 1-文件
-  unsigned char reserved[5];  // 系统保留
+  unsigned char reserved[4];  // 系统保留
   unsigned short time;        // 文件创建时间
   unsigned short date;        // 文件创建日期
   unsigned short firstBlock;  // 第一个数据块号
@@ -20,9 +20,9 @@ typedef struct FCB {
 // 用户打开表
 typedef struct USEROPEN {
   char filename[8];           // 文件名
-  char exname[3];             // 扩展名
+  char exname[4];             // 扩展名
   unsigned char attribute;    // 文件属性 0-目录 1-文件
-  unsigned char reserved[5];  // 系统保留
+  unsigned char reserved[4];  // 系统保留
   unsigned short time;        // 文件创建时间
   unsigned short date;        // 文件创建日期
   unsigned short firstBlock;  // 第一个数据块号
