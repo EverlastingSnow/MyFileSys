@@ -472,6 +472,9 @@ int do_write(int fd, char* text, int len, char wStyle) {
 void my_cd(char* dirName) {
   // 检查当前目录是否为根目录
   printf("dirName: %s, curFd: %d\n", dirName, curFd);
+  if (strcmp(dirName, ".") == 0){
+    return;
+  }
   if (strcmp(dirName, "..") == 0) {
     if (strcmp(openFileList[curFd].dir, "/") == 0) {
       printf("Already in root directory.\n");
@@ -488,8 +491,9 @@ void my_cd(char* dirName) {
     if (fatherFd == -1) {
       printf("Error: Parent directory not found.\n");
       return;
+    }else{
+      my_close(curFd);
     }
-    curFd = fatherFd;
     return;
   }
 
