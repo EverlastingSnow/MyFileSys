@@ -56,15 +56,15 @@ void my_format() {
   root->time = time->tm_hour * 2048 + time->tm_min * 32 + time->tm_sec / 2;
   root->date =
       (time->tm_year - 100) * 512 + (time->tm_mon + 1) * 32 + (time->tm_mday);
-  root->firstBlock = 1;
-  root->length = sizeof(FCB);
+  root->firstBlock = 5;
+  root->length = 2 * sizeof(FCB);
+  // printf("%lu\n", sizeof(FCB));
   root->free = 1;
 
   // 根目录上级目录格式化
   FCB* root2 = (FCB*)(root + 1);
-  strcpy(root->filename, "..");
-  strcpy(root->exname, "d");
-  root->attribute = ATT_DIR;
+  memcpy(root2, root, sizeof(FCB));
+  strcpy(root2->filename, "..");
 
   // 剩余块格式化
   for (int i = 2; i < BLOCKSIZE / sizeof(FCB); ++i) {
@@ -114,28 +114,17 @@ void my_startsys() {
   openFileList[0].faDirBlock = 5;
   openFileList[0].fcbOffset = 0;
 
-  // 创建 "." 目录
-  FCB* newDir = (FCB*)malloc(sizeof(FCB));
-  strcpy(newDir->filename, ".");
-  strcpy(newDir->exname, "d");
-  newDir->attribute = ATT_DIR;
-  time_t rawTime = time(NULL);
-  struct tm* time = localtime(&rawTime);
-  newDir->time = time->tm_hour * 2048 + time->tm_min * 32 + time->tm_sec / 2;
-  newDir->date =
-      (time->tm_year - 100) * 512 + (time->tm_mon + 1) * 32 + time->tm_mday;
-  newDir->firstBlock = 5;
-  newDir->length = sizeof(FCB);
-  newDir->free = 1;
-  do_write(0, (char*)newDir, sizeof(FCB), OW);
-  free(newDir);
+  startPos = ((BLOCK0*) myVHead)->startBlock;
 }
 
 void my_exitsys() {
-  for (int i = 0; i < MAXOPENFILE; ++i) {
-    if (openFileList[i].free == 1) {
-      my_close(i);
-    }
+  // for (int i = 0; i < MAXOPENFILE; ++i) {
+  //   if (openFileList[i].free == 1) {
+  //     my_close(i);
+  //   }
+  // }
+  while (curFd){
+    my_close(curFd);
   }
   FILE* fp = fopen(SYSFILENAME, "wb");
   fwrite(myVHead, SIZE, 1, fp);
@@ -243,9 +232,9 @@ int my_close(int fd) {
   }
 
   // 如果是目录，则将当前目录设为父目录
-  if (openFileList[fd].attribute == ATT_DIR) {
+  // if (openFileList[fd].attribute == ATT_DIR) {
     curFd = fatherFd;
-  }
+  // }
   // 释放打开的文件表
   memset(&openFileList[fd], 0, sizeof(USEROPEN));
 
