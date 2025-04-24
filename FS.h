@@ -82,4 +82,6 @@ int getFreeBlock();
 
 void my_exitsys();
 
+void my_tree(int dep);
+
 #endif

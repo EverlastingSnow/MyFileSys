@@ -16,6 +16,7 @@ int getCommandID(char* command) {
   if (strcmp(command, "read") == 0) return READ;
   if (strcmp(command, "exit") == 0) return EXIT;
   if (strcmp(command, "help") == 0) return HELP;
+  if (strcmp(command, "tree") == 0) return TREE;
   return -1;
 }
 int main() {
@@ -135,6 +136,10 @@ int main() {
             "Available commands:\ncd dirname\nmkdir dirname\nrmdir "
             "dirname\nls\ntouch filename\nrm filename\nopen "
             "filename\nclose\nwrite\nread\nexit\nhelp\n");
+        break;
+      case TREE:
+        printf(".\n");
+        my_tree(0);
         break;
       default:
         printf("Unknown command. Type 'help' for a list of commands.\n");

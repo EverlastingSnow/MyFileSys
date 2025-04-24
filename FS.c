@@ -435,11 +435,11 @@ int do_write(int fd, char* text, int len, char wStyle) {
   if (openFileList[fd].pos > openFileList[fd].length) {
     openFileList[fd].length = openFileList[fd].pos;
   }
-  printf(
-      "fd = %d, openFileList[fd].length = %d, openFileList[fd].pos = %d, "
-      "filename = "
-      "%s\n",
-      fd, openFileList[fd].length, openFileList[fd].pos, text);
+  // printf(
+  //     "fd = %d, openFileList[fd].length = %d, openFileList[fd].pos = %d, "
+  //     "filename = "
+  //     "%s\n",
+  //     fd, openFileList[fd].length, openFileList[fd].pos, text);
   // 截断写一定要修改文件长度，覆盖写需要修改目录长度
   if (wStyle == TW || (wStyle == AW && openFileList[fd].attribute == ATT_DIR)) {
     offset = openFileList[fd].length;
@@ -481,7 +481,7 @@ int do_write(int fd, char* text, int len, char wStyle) {
 
 void my_cd(char* dirName) {
   // 检查当前目录是否为根目录
-  printf("dirName: %s, curFd: %d\n", dirName, curFd);
+  // printf("dirName: %s, curFd: %d\n", dirName, curFd);
   if (strcmp(dirName, ".") == 0){
     return;
   }
@@ -614,7 +614,7 @@ void my_mkdir(char* dirName) {
       break;
     }
   }
-  printf("freeFCB = %d, fileLen = %d\n", freeFCB, fileLen);
+  // printf("freeFCB = %d, fileLen = %d\n", freeFCB, fileLen);
 
   // 初始化新目录的FCB
   FCB* newDir = (FCB*)malloc(sizeof(FCB));
@@ -663,16 +663,16 @@ void my_mkdir(char* dirName) {
   newDir->time = openFileList[curFd].time;
   do_write(newFd, (char*)newDir, sizeof(FCB), OW);
 
-  {
-    char* tmpBuf = (char*)malloc(BLOCKSIZE * MAXOPENFILE);
-    openFileList[newFd].pos = 0;
-    int fileLen = do_read(newFd, openFileList[newFd].length, tmpBuf);
-    printf("fileLen = %d %s\n", fileLen, tmpBuf);
-    FCB* fcbPtr = (FCB*)tmpBuf;
-    for (int i = 0; i < fileLen / sizeof(FCB); ++i) {
-      printf("name = %s\n", fcbPtr[i].filename);
-    }
-  }
+  // {
+  //   char* tmpBuf = (char*)malloc(BLOCKSIZE * MAXOPENFILE);
+  //   openFileList[newFd].pos = 0;
+  //   int fileLen = do_read(newFd, openFileList[newFd].length, tmpBuf);
+  //   printf("fileLen = %d %s\n", fileLen, tmpBuf);
+  //   FCB* fcbPtr = (FCB*)tmpBuf;
+  //   for (int i = 0; i < fileLen / sizeof(FCB); ++i) {
+  //     printf("name = %s\n", fcbPtr[i].filename);
+  //   }
+  // }
 
   my_close(newFd);
   free(newDir);
@@ -956,4 +956,50 @@ void my_rm(char* fileName) {
 
   // 备份FAT表
   memcpy((FAT*)(myVHead + BLOCKSIZE * 3), fat1, BLOCKSIZE * 2);
+}
+void my_tree(int dep){
+  if (openFileList[curFd].attribute == ATT_FILE){
+    printf("Error: Can list tree in a file\n");
+    return;
+  }
+  char buf[BLOCKSIZE];
+  openFileList[curFd].pos = 0;
+  if (do_read(curFd, openFileList[curFd].length, buf) < 0) {
+    printf("Error: Failed to read current directory.\n");
+    return;
+  }
+  FCB* fcbptr = (FCB*)buf;
+  for (int i = 0; i < openFileList[curFd].length / sizeof(FCB); ++i, fcbptr++) {
+    if (fcbptr->free == 1 && strcmp(fcbptr->filename, ".") != 0 &&
+        strcmp(fcbptr->filename, "..") != 0) {
+      for (int j = 0;j < dep; j++){
+        printf("\t");
+      }
+      printf("|");
+      for (int j = 0;j < 4; j++){
+        printf("-");
+      }
+      if (strcmp(fcbptr->exname, "") != 0 && fcbptr->attribute == ATT_FILE){
+        printf("%s.%s\n", fcbptr->filename, fcbptr->exname);
+      }else{
+        printf("%s\n", fcbptr->filename);
+      }
+      if (fcbptr->attribute == ATT_DIR){
+        // 递归调用
+        // int tmp = curFd;
+        size_t len = strlen(fcbptr->filename) + 2 + strlen(fcbptr->exname);
+        if (strcmp(fcbptr->exname, "") == 0 || fcbptr->attribute == ATT_DIR) len = strlen(fcbptr->filename) + 1;
+        char *tmp = malloc(sizeof(char) * len);
+        strcpy(tmp, fcbptr->filename);
+        if (strcmp(fcbptr->exname, "") != 0 && fcbptr->attribute == ATT_FILE){
+          strcat(tmp, ".");
+          strcat(tmp, fcbptr->exname);
+        }
+        my_cd(tmp);
+        my_tree(dep + 1);
+        my_cd("..");
+        // curFd = tmp;
+      }
+    }  
+  }
 }

@@ -23,6 +23,7 @@
 #define READ 9
 #define EXIT 10
 #define HELP 11
+#define TREE 12
 
 #define TW 0 //截断写（Truncate Write）
 #define OW 1 //覆盖写（Overwrite）
