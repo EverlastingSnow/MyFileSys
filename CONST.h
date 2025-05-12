@@ -4,7 +4,7 @@
 #define END 65535 //文件结束符
 #define FREE 0 //空闲块
 #define ROOTBLOCKNUM 2 //根目录占用块数
-#define MAXOPENFILE 10 //最大打开文件数
+#define MAXOPENFILE 100 //最大打开文件数
 #define SYSFILENAME "MYFILESYS" //文件系统名
 
 #define ATT_DIR 0 //attribute 目录 0

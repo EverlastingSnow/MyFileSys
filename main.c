@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "FS.h"
 
@@ -115,7 +116,14 @@ int main() {
         break;
       case WRITE:
         if (openFileList[curFd].attribute == ATT_FILE) {
-          my_write(curFd);
+          sp = strtok(NULL, " \n");
+          int len = 0;
+          if (sp == NULL) {
+            len = -1;
+          }else{
+            len = atoi(sp);
+          }
+          my_write(curFd, len);
         } else {
           printf("Please write a file!");
         }

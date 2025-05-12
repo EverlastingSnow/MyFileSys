@@ -68,8 +68,8 @@ void my_rm(char* fileName);
 int my_open(char* fileName);
 int my_close(int fd);
 
-int my_write(int fd);
-int do_write(int fd, char* text, int len, char wStyle);
+int my_write(int fd, int len);
+int do_write(int fd, char* text, int len, char wStyle, int stLen);
 
 int my_read(int fd);
 int do_read(int fd, int len, char* text);

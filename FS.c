@@ -233,7 +233,7 @@ int my_close(int fd) {
     my_copy_fcb(fd, fcbptr, 1);
     openFileList[fatherFd].pos = openFileList[fd].fcbOffset * sizeof(FCB);
     // 写入磁盘
-    if (do_write(fatherFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+    if (do_write(fatherFd, (char*)fcbptr, sizeof(FCB), OW, -1) < 0) {
       printf("Error: Failed to write father directory.\n");
       return -1;
     }
@@ -314,7 +314,7 @@ int do_read(int fd, int len, char* text) {
 }
 
 int getFreeBlock() {
-  FAT* fat1 = (FAT*)(myVHead + BLOCKSIZE * 1);
+  FAT* fat1 = (FAT*)(myVHead + BLOCKSIZE * 1); 
   for (int i = 0; i < SIZE / BLOCKSIZE; ++i) {
     if (fat1[i].id == FREE) {
       return i;
@@ -323,7 +323,7 @@ int getFreeBlock() {
   return -1;
 }
 
-int my_write(int fd) {
+int my_write(int fd, int len) {
   if (fd < 0 || fd >= MAXOPENFILE) {
     printf("Error: Invalid file descriptor.\n");
     return -1;
@@ -348,18 +348,22 @@ int my_write(int fd) {
       break;
     }
     line[strlen(line)] = '\n';
+    if (strlen(text) + strlen(line) > MAXOPENFILE * BLOCKSIZE) {
+      printf("Error: Input exceeds maximum length.\n");
+      return -1;
+    }
     strcat(text, line);
   }
 
   text[strlen(text)] = '\0';
   strcpy(line, text + 2);
   line[strlen(line) - 2] = '\0';
-  do_write(fd, line, strlen(line) + 1, wStyle);
+  do_write(fd, line, strlen(line) + 1, wStyle, len);
   openFileList[fd].fcbState = 1;
   return 0;
 }
 
-int do_write(int fd, char* text, int len, char wStyle) {
+int do_write(int fd, char* text, int len, char wStyle, int stLen) {
   // 截断写
   if (wStyle == TW) {
     openFileList[fd].pos = 0;
@@ -368,11 +372,14 @@ int do_write(int fd, char* text, int len, char wStyle) {
     // 追加写
     if (wStyle == AW) {
       openFileList[fd].pos = openFileList[fd].length;
-    }
-    if (openFileList[fd].attribute == ATT_FILE) {
-      if (openFileList[fd].length != 0) {
-        openFileList[fd].pos = openFileList[fd].length - 1;  // 去掉末尾\0
+      if (openFileList[fd].attribute == ATT_FILE) {
+        if (openFileList[fd].length != 0) {
+          openFileList[fd].pos = openFileList[fd].length - 1;  // 去掉末尾\0
+        }
       }
+    }else{
+      if (stLen != -1)
+        openFileList[fd].pos = stLen;
     }
   }
 
@@ -449,29 +456,29 @@ int do_write(int fd, char* text, int len, char wStyle) {
       offset -= BLOCKSIZE;
       fatPtr = fat1 + blockID;
     }
-    int id = fatPtr->id;
-    fatPtr->id = END;
-    fatPtr = fat1 + id;
-    while (fatPtr->id != END) {
-      id = fatPtr->id;
-      fatPtr->id = FREE;
-      fatPtr = fat1 + id;
-    }
-    fatPtr->id = FREE;
-    // while (1) {
-    //   // 不是最后一块，就先释放这块，再释放后面的
-    //   if (fatPtr->id != END) {
-    //     int id = fatPtr->id;
-    //     fatPtr->id = FREE;
-    //     fatPtr = fat1 + id;
-    //   } else {
-    //     fatPtr->id = FREE;
-    //     break;
-    //   }
-    // }
-    // // FAT表最后一块添加标记
-    // fatPtr = fat1 + blockID;
+    // int id = fatPtr->id;
     // fatPtr->id = END;
+    // fatPtr = fat1 + id;
+    // while (fatPtr->id != END) {
+    //   id = fatPtr->id;
+    //   fatPtr->id = FREE;
+    //   fatPtr = fat1 + id;
+    // }
+    // fatPtr->id = FREE;
+    while (1) {
+      // 不是最后一块，就先释放这块，再释放后面的
+      if (fatPtr->id != END) {
+        int id = fatPtr->id;
+        fatPtr->id = FREE;
+        fatPtr = fat1 + id;
+      } else {
+        fatPtr->id = FREE;
+        break;
+      }
+    }
+    // FAT表最后一块添加标记
+    fatPtr = fat1 + blockID;
+    fatPtr->id = END;
   }
   // 备份fat1到fat2
   memcpy((FAT*)(myVHead + BLOCKSIZE * 3), (FAT*)(myVHead + BLOCKSIZE * 1),
@@ -633,7 +640,7 @@ void my_mkdir(char* dirName) {
   // 写入修改后的FCB
   openFileList[curFd].pos = freeFCB * sizeof(FCB);
   openFileList[curFd].fcbState = 1;
-  if (do_write(curFd, (char*)newDir, sizeof(FCB), OW) < 0) {
+  if (do_write(curFd, (char*)newDir, sizeof(FCB), OW, -1) < 0) {
     printf("Error: Failed to write directory entry.\n");
     return;
   }
@@ -654,14 +661,14 @@ void my_mkdir(char* dirName) {
   // 初始化新目录的内容
   // 创建 "." 条目
   strcpy(newDir->filename, ".");
-  do_write(newFd, (char*)newDir, sizeof(FCB), OW);
+  do_write(newFd, (char*)newDir, sizeof(FCB), OW, -1);
   // 创建 ".." 条目
   strcpy(newDir->filename, "..");
   newDir->firstBlock = openFileList[curFd].firstBlock;
   newDir->length = openFileList[curFd].length;
   newDir->date = openFileList[curFd].date;
   newDir->time = openFileList[curFd].time;
-  do_write(newFd, (char*)newDir, sizeof(FCB), OW);
+  do_write(newFd, (char*)newDir, sizeof(FCB), OW, -1);
 
   // {
   //   char* tmpBuf = (char*)malloc(BLOCKSIZE * MAXOPENFILE);
@@ -681,7 +688,7 @@ void my_mkdir(char* dirName) {
   fcbPtr = (FCB*)buf;
   fcbPtr->length = openFileList[curFd].length;
   openFileList[curFd].pos = 0;
-  do_write(curFd, (char*)fcbPtr, sizeof(FCB), OW);
+  do_write(curFd, (char*)fcbPtr, sizeof(FCB), OW, -1);
   openFileList[curFd].fcbState = 1;
 }
 
@@ -742,7 +749,7 @@ void my_rmdir(char* dirName) {
   // 从当前目录中删除目录项
   memset(fcbptr, 0, sizeof(FCB));
   openFileList[curFd].pos = found * sizeof(FCB);
-  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW, -1) < 0) {
     printf("Error: Failed to remove directory entry.\n");
     return;
   }
@@ -885,7 +892,7 @@ void my_touch(char* fileName) {
 
   // 写入修改后的FCB
   openFileList[curFd].pos = freeFCB * sizeof(FCB);
-  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW, -1) < 0) {
     printf("Error: Failed to write file entry.\n");
     return;
   }
@@ -894,7 +901,7 @@ void my_touch(char* fileName) {
   fcbptr = (FCB*)buf;
   fcbptr->length = openFileList[curFd].length;
   openFileList[curFd].pos = 0;
-  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW, -1) < 0) {
     printf("Error: Failed to write current directory entry.\n");
     return;
   }
@@ -949,7 +956,7 @@ void my_rm(char* fileName) {
   // 从当前目录中删除文件项
   memset(fcbptr, 0, sizeof(FCB));
   openFileList[curFd].pos = found * sizeof(FCB);
-  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW) < 0) {
+  if (do_write(curFd, (char*)fcbptr, sizeof(FCB), OW, -1) < 0) {
     printf("Error: Failed to remove file entry.\n");
     return;
   }
